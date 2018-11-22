@@ -1,0 +1,13 @@
+[package]
+name = "runwasm"
+version = "0.1.0"
+authors = ["Jef <jackefransham@gmail.com>"]
+description = "Run an emscripten-compiled wasm file using `wasmi` and dark magic"
+license = "Unlicense"
+
+[dependencies]
+wasmi = { path = "./wasmi" }
+parity-wasm = "0.31"
+libc = "0.2"
+byteorder = "1.0"
+clap = "2.32"
