@@ -918,7 +918,7 @@ fn main() {
     env.alloc = Some(Alloc::from_module(&main));
 
     let pointers = iter::once(input)
-        .chain(matches.values_of("ARGS").unwrap())
+        .chain(matches.values_of("ARGS").unwrap_or_default())
         .map(|arg| env.malloc(arg.as_bytes()))
         .collect::<Vec<_>>();
 
