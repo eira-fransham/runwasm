@@ -1,0 +1,7 @@
+
+running 2 tests
+test bench_sha3_256_input_4096_bytes ... bench:      30,940 ns/iter (+/- 6,624) = 132 MB/s
+test keccakf_u64                     ... bench:         803 ns/iter (+/- 282) = 31 MB/s
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 2 measured; 0 filtered out
+

@@ -7,10 +7,10 @@ extern crate libc;
 extern crate parity_wasm;
 extern crate wasmi;
 
-use std::env;
+use std::collections::HashMap;
 use std::ffi::CStr;
 use std::str::FromStr;
-use std::{mem, process};
+use std::{env, mem, process};
 
 use wasmi::memory_units::Pages;
 use wasmi::nan_preserving_float::F64;
@@ -672,11 +672,25 @@ impl Alloc {
     }
 }
 
+struct ExceptionInfo {
+    pub type_: u32,
+    pub destructor: u32,
+    pub caught: bool,
+    pub rethrown: bool,
+}
+
+#[derive(Default)]
+struct Exceptions {
+    pub infos: HashMap<u32, ExceptionInfo>,
+    pub last: Option<u32>,
+}
+
 struct Env {
     pub static_bump: u32,
     pub memory: MemoryRef,
     pub dyncall: Option<DynCall>,
     pub alloc: Option<Alloc>,
+    pub exceptions: Exceptions,
     pub env_allocation: Option<u32>,
 }
 
@@ -704,6 +718,7 @@ impl Env {
         Env {
             memory,
             static_bump,
+            exceptions: Exceptions::default(),
             dyncall: None,
             alloc: None,
             env_allocation: None,
@@ -851,7 +866,7 @@ impl ModuleImportResolver for Global {
     }
 }
 
-fn main() {
+fn main() -> Result<(), &'static str> {
     use std::iter;
 
     let matches = {
@@ -875,24 +890,32 @@ fn main() {
                     .takes_value(true)
                     .help(
                         "The value of `STATIC_BUMP` in the generated JavaScript \
-                         file that should have been emitted when compiling your
+                         file that should have been emitted when compiling your \
                          Wasm file.",
                     )
                     .required(true),
             )
-            .arg(Arg::with_name("ARGS").multiple(true))
+            .arg(Arg::with_name("ARGS").multiple(true).help(
+                "Any arguments to pass to the binary to be run. To pass arguments \
+                 that start with `-` or `--`, you have to have a single `--` argument \
+                 before the rest of the arguments to prevent these arguments being \
+                 passed to `runwasm` itself, like so: `runwasm -s 1234 foo.wasm -- \
+                 --help`",
+            ))
             .get_matches()
     };
 
     let input = matches.value_of("INPUT").unwrap();
-    let module = parity_wasm::deserialize_file(&input).expect("File to be deserialized");
+    let module =
+        parity_wasm::deserialize_file(&input).map_err(|_| "Input file is not valid Wasm")?;
 
     let static_bump = matches
         .value_of("static-bump")
         .and_then(|v| u32::from_str(v).ok())
-        .expect("Invalid number supplied for `static-bump`");
+        .ok_or("Invalid number supplied for `static-bump`")?;
 
-    let loaded_module = wasmi::Module::from_parity_wasm_module(module).expect("Module to be valid");
+    let loaded_module =
+        wasmi::Module::from_parity_wasm_module(module).map_err(|_| "Input module is invalid")?;
 
     // Intialize deserialized module. It adds module into It expects 3 parameters:
     // - a name for the module
@@ -900,7 +923,8 @@ fn main() {
     // - "main" module doesn't import native module(s) this is why we don't need to provide external native modules here
     // This test shows how to implement native module https://github.com/NikVolf/parity-wasm/blob/master/src/interpreter/tests/basics.rs#L197
     let mut env = Env::new(
-        MemoryInstance::alloc(Pages(256), Some(Pages(256))).expect("Could not allocate memory"),
+        MemoryInstance::alloc(Pages(256), Some(Pages(256)))
+            .map_err(|_| "Could not allocate memory")?,
         static_bump,
     );
 
@@ -909,10 +933,11 @@ fn main() {
             .with_resolver("env", &env)
             .with_resolver("global", &Global);
 
-        ModuleInstance::new(&loaded_module, &imports).expect("Failed to instantiate module")
-    }
-    .run_start(&mut env)
-    .expect("Failed to run start for module");
+        ModuleInstance::new(&loaded_module, &imports).map_err(|_| "Failed to instantiate module")
+    }?;
+    let main = main
+        .run_start(&mut env)
+        .map_err(|_| "Failed to run start for module")?;
 
     env.dyncall = Some(DynCall::from_module(&main));
     env.alloc = Some(Alloc::from_module(&main));
@@ -932,9 +957,9 @@ fn main() {
 
     process::exit(
         main.invoke_export("_main", &[argv.into(), argc.into()], &mut env)
-            .expect("Failed to invoke `_main`")
+            .map_err(|_| "Failed to invoke `_main`")?
             .and_then(wasmi::RuntimeValue::try_into)
-            .expect("`_main` didn't return i32"),
+            .map_err(|_| "`_main` didn't return i32")?,
     )
 }
 
@@ -947,5 +972,10 @@ mod tests {
         b.iter(|| {
             ::std::thread::sleep_ms(1);
         });
+    }
+
+    #[test]
+    fn fails() {
+        assert!(0 == 1);
     }
 }
